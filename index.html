@@ -193,7 +193,7 @@ S.attendance=S.attendance||[];if(!S.since)S.since=today();S.prep=S.prep||[];
 if(!S.settings.attend)S.settings.attend=["MATH 151","ECON 151","COM 101"];
 if(!S.settings.minAttend)S.settings.minAttend=75;
 S.settings.morning="09:00";S.settings.wrap="23:00";S.settings.quiet=["23:30","07:00"];
-function save(){try{localStorage.setItem(KEY,JSON.stringify(S));}catch(e){toast("Couldn't save. Make a backup in Settings.");}}
+function save(){try{localStorage.setItem(KEY,JSON.stringify(S));if(typeof scheduleSync==="function")scheduleSync();}catch(e){toast("Couldn't save. Make a backup in Settings.");}}
 save();
 try{if(navigator.storage&&navigator.storage.persist)navigator.storage.persist();}catch(e){}
 
@@ -533,7 +533,8 @@ function settingsSheet(){
    {k:"attend",label:"Courses with attendance (comma separated)",value:S.settings.attend.join(", ")},
    {k:"minAttend",label:"Minimum attendance (%)",type:"number",value:S.settings.minAttend},
    {type:"info",text:'Morning snapshot at 9:00 am, evening wrap-up at 11:00 pm, quiet hours 11:30 pm to 7:00 am. <button class="link" data-x="sched" style="padding:0;color:var(--tealD)">See upcoming reminders</button>'},
-{type:"info",text:'Your data is stored on this device. Make a backup now and then, especially before changing phones. <button class="link" data-x="backup" style="padding:0;color:var(--tealD)">Copy backup</button> &nbsp; <button class="link" data-x="restore" style="padding:0;color:var(--tealD)">Restore</button>'}],
+{type:"info",text:'Notifications are '+(pushCfg().on?"on":"off")+'. <button class="link" data-x="notif" style="padding:0;color:var(--tealD)">'+(pushCfg().on?"Manage":"Set up")+'</button>'},
+   {type:"info",text:'Your data is stored on this device. Make a backup now and then, especially before changing phones. <button class="link" data-x="backup" style="padding:0;color:var(--tealD)">Copy backup</button> &nbsp; <button class="link" data-x="restore" style="padding:0;color:var(--tealD)">Restore</button>'}],
   onSave:function(v){S.settings.buffer=Math.max(1,Math.round(v.buffer)||3);if(v.termStart)S.settings.termStart=v.termStart;if(v.termEnd)S.settings.termEnd=v.termEnd;S.settings.attend=(v.attend||"").split(",").map(function(x){return x.trim();}).filter(Boolean);S.settings.minAttend=Math.min(100,Math.max(1,Math.round(v.minAttend)||75));toast("Settings saved");},
   onExtra:function(x,id){
    if(x==="delclass"){var c=find(S.classes,id);if(c&&confirm("Remove "+c.name+" ("+dn[c.day]+") from your timetable?")){remove(S.classes,id);save();render();settingsSheet();}}
@@ -541,6 +542,7 @@ function settingsSheet(){
    if(x==="backup"){var txt=JSON.stringify(S);if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(txt).then(function(){toast("Backup copied. Paste it into Notes to keep it safe.");},function(){showBackup(txt);});}else showBackup(txt);}
    if(x==="restore")restoreSheet();
    if(x==="sched")scheduleSheet();
+   if(x==="notif")notifSheet();
   }});
 }
 function showBackup(txt){openSheet({title:"Your backup",noFocus:true,fields:[{k:"b",label:"Select all and copy this text",type:"textarea",value:txt}],onSave:function(){}});}
@@ -675,6 +677,56 @@ S.routine.variable=S.routine.variable.filter(function(x){return diff(x.date,toda
 
 if("serviceWorker" in navigator&&location.protocol==="https:"&&!/claude\.ai|claudeusercontent/.test(location.host)){try{navigator.serviceWorker.register("sw.js").catch(function(){});}catch(e){}}
 try{localStorage.removeItem(KEY+"-lock");}catch(e){}
+/* ---------- notifications ---------- */
+var NK=KEY+"-push";
+function pushCfg(){try{return JSON.parse(localStorage.getItem(NK))||{};}catch(e){return {};}}
+function setPushCfg(o){try{localStorage.setItem(NK,JSON.stringify(o));}catch(e){}}
+function callFn(body){var c=pushCfg();body.secret=c.secret;
+ return fetch(c.url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}).then(function(r){return r.json().catch(function(){return {};}).then(function(j){if(!r.ok)throw new Error(r.status===401?"The secret doesn't match the one in Supabase.":(j.error||"Server error "+r.status));return j;});});}
+function b64u(s){var p="=".repeat((4-s.length%4)%4),b=atob((s+p).replace(/-/g,"+").replace(/_/g,"/")),a=new Uint8Array(b.length);for(var i=0;i<b.length;i++)a[i]=b.charCodeAt(i);return a;}
+function snapFor(d){
+ var cls=classesOn(d).filter(function(c){return c.type!=="break";}).length;
+ var due=S.tasks.filter(function(t){return !t.done&&(t.kind==="assignment"||t.kind==="exam")&&diff(d,t.date)>=0&&diff(d,t.date)<=1;}).length;
+ var todo=S.tasks.filter(function(t){return t.kind==="task"&&!t.done&&t.date<=d;}).length;
+ return (cls?plural(cls,"class"):"No classes")+", "+(due?plural(due,"deadline")+" by tomorrow":"no urgent deadlines")+", "+plural(todo,"task")+" on your list.";
+}
+function syncNow(){
+ var c=pushCfg();if(!c.on||!c.url)return;var now=Date.now();
+ var list=reminders(today(),7).map(function(r){
+  var a=r.date.split("-"),t=r.time.split(":"),at=new Date(+a[0],a[1]-1,+a[2],+t[0],+t[1]),body=r.title,url="./";
+  if(r.title==="Morning snapshot")body="Good morning. "+snapFor(r.date);
+  if(r.title==="Evening wrap-up"){body="Time to wrap up: see what carries over and what's on tomorrow.";url="./?open=wrap";}
+  return {fire_at:at.toISOString(),t:at.getTime(),title:["","Due soon","Coming up","Mise","Mise"][r.tier],body:body,tier:r.tier,url:url};
+ }).filter(function(r){return r.t>now;});
+ list.forEach(function(r){delete r.t;});
+ callFn({action:"sync",reminders:list}).catch(function(){});
+}
+var syncT;function scheduleSync(){clearTimeout(syncT);syncT=setTimeout(syncNow,2500);}
+function turnOnPush(url,secret){
+ if(!("Notification" in window)||!("serviceWorker" in navigator)||!("PushManager" in window)){toast("Open Mise from its home screen icon to turn on notifications.");return;}
+ setPushCfg({url:url,secret:secret,on:false});
+ Promise.resolve(Notification.requestPermission()).then(function(p){if(p!=="granted")throw new Error("Notifications weren't allowed. Check iPhone Settings, Notifications, Mise.");return callFn({action:"vapid"});})
+ .then(function(j){return navigator.serviceWorker.ready.then(function(reg){return reg.pushManager.getSubscription().then(function(s){return s||reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:b64u(j.publicKey)});});});})
+ .then(function(sub){return callFn({action:"subscribe",subscription:sub.toJSON()});})
+ .then(function(){setPushCfg({url:url,secret:secret,on:true});syncNow();toast("Notifications are on");closeSheet();})
+ .catch(function(e){toast(e.message||"Something went wrong");});
+}
+function notifSheet(){
+ var c=pushCfg();
+ openSheet({title:"Notifications",noFocus:true,
+  html:c.on?'<div class="actions" style="margin-bottom:14px"><button class="btn ghost" data-x="ptest">Send a test</button><button class="btn ghost" data-x="poff">Turn off</button></div>':"",
+  fields:[{type:"info",text:c.on?"Notifications are on. Reminders update automatically whenever you change something in Mise.":"Paste the two values from your Supabase setup, then tap Turn on."},
+   {k:"url",label:"Function URL",value:c.url||"",ph:"https://xxxx.supabase.co/functions/v1/mise"},
+   {k:"secret",label:"Secret",type:"password",value:c.secret||""}],
+  saveLabel:c.on?"Save":"Turn on",
+  onSave:function(v){if(!need(v.url&&v.secret,"Fill in both fields."))return false;turnOnPush(v.url.trim(),v.secret.trim());return false;},
+  onExtra:function(x){
+   if(x==="ptest")callFn({action:"test"}).then(function(){toast("Test sent. It should arrive in a few seconds.");},function(e){toast(e.message);});
+   if(x==="poff"){var cc=pushCfg();callFn({action:"sync",reminders:[]}).catch(function(){});cc.on=false;setPushCfg(cc);toast("Notifications are off");closeSheet();}
+  }});
+}
+document.addEventListener("visibilitychange",function(){if(!document.hidden)syncNow();});
+setTimeout(syncNow,1500);
 render();
 if(/[?&]open=wrap/.test(location.search))wrapSheet();
 })();
