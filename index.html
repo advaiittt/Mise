@@ -11,6 +11,7 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <title>Mise</title>
+<!-- version 6 -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=DM+Sans:wght@400;500;700&display=swap">
 <style>
@@ -682,7 +683,7 @@ var NK=KEY+"-push";
 function pushCfg(){try{return JSON.parse(localStorage.getItem(NK))||{};}catch(e){return {};}}
 function setPushCfg(o){try{localStorage.setItem(NK,JSON.stringify(o));}catch(e){}}
 function callFn(body){var c=pushCfg();body.secret=c.secret;
- return fetch(c.url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}).then(function(r){return r.json().catch(function(){return {};}).then(function(j){if(!r.ok)throw new Error(r.status===401?"The secret doesn't match the one in Supabase.":(j.error||"Server error "+r.status));return j;});});}
+ return fetch(c.url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}).then(function(r){return r.json().catch(function(){return {};}).then(function(j){if(!r.ok)throw new Error(r.status===401?(j.error==="unauthorized"?"The secret doesn't match MISE_SECRET in Supabase.":"Supabase blocked the request. Switch off Verify JWT for the mise function."):(j.error||"Server error "+r.status));return j;});});}
 function b64u(s){var p="=".repeat((4-s.length%4)%4),b=atob((s+p).replace(/-/g,"+").replace(/_/g,"/")),a=new Uint8Array(b.length);for(var i=0;i<b.length;i++)a[i]=b.charCodeAt(i);return a;}
 function snapFor(d){
  var cls=classesOn(d).filter(function(c){return c.type!=="break";}).length;
